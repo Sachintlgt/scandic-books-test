@@ -7,6 +7,7 @@ export interface OrderGroup {
 }
 
 export function groupOrdersByDateAndCountry(orders: Order[]): OrderGroup[] {
+  // This grouped contains bulk order record
   const grouped: Record<string, Order[]> = {};
   for (const order of orders) {
     const key = `${order.created_at}:${order.currency}`;
@@ -35,12 +36,12 @@ export function getOrdersGroupToVoucher({
   groupedOrders.orders.forEach((order) => {
     order.line_items.forEach((item) => {
       item.tax_lines.forEach((tax) => {
-        const vatRate = tax.rate;
-        const itemTotalPrice = item.price * item.quantity;
-        const vatAmount = tax.price;
+        const vatRate = tax.rate; // 0.25
+        const itemTotalPrice = item.price * item.quantity; // 100 * 1
+        const vatAmount = tax.price; // 20
         const netAmount = order.taxes_included
           ? itemTotalPrice - vatAmount
-          : itemTotalPrice;
+          : itemTotalPrice; // 80
         if (!vatTotals[vatRate]) {
           vatTotals[vatRate] = { sales_net: 0, sales_vat: 0 };
         }
@@ -52,6 +53,40 @@ export function getOrdersGroupToVoucher({
     // TODO: distribute shipping lines across VAT rates proportionally
     //       Update vatTotals so shipping cost is allocated to the same VAT
     //       percentages as the line items.
+
+    /** Assumeing senario of CASE
+     * pesudocode: Need to proportionate the shipping charge
+     * 1. Calculate Net Sales
+     * 2. Total shipping charges with TAX
+     * 3. Allocate VAT proportion of the sum shipping to thier proportion of the line items VAT tax percentage 
+     * 
+     */
+
+    // Fetching Total net sales
+    const totalNet = Object.values(vatTotals).reduce((sum, vat) => sum + vat.sales_net, 0);
+
+    // Fetching Totat shipping charges for the order
+    const totalShipping = groupedOrders.orders.reduce(
+      (sum, order) => sum + order.shipping_lines.reduce((s, sl) => s + sl.price, 0),
+      0
+    );
+
+    // Distribute shipping across VAT rates proportionally
+    for (const rate in vatTotals) {
+      //  Getting Vat share from the totalNet sales 
+      const share = vatTotals[rate].sales_net / totalNet;
+      // Getting Shipping charge for each line_items
+      const shippingShare = (totalShipping * share).toFixed(2);
+      const vatRate = parseFloat(rate);
+      // Getting VAT contribution towards shipping
+      const vatPart = (parseFloat(shippingShare) * (vatRate / (1 + vatRate))).toFixed(2);
+      // Net Shipping Cost without tax 
+      const netPart = order.taxes_included ? parseFloat(shippingShare) - parseFloat(vatPart): parseFloat(shippingShare);
+
+      vatTotals[rate].sales_net += netPart;
+      vatTotals[rate].sales_vat += parseFloat(vatPart);
+    }
+
   });
 
   const rows: VoucherRow[] = [
